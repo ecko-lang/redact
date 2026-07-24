@@ -1,0 +1,10 @@
+{
+  "module": "github.com/ecko-sh/redact",
+  "version": "0.9.1",
+  "entrypoint": "main.ecko",
+  "description": "Sensitive-key detection and masking for safe logging: is_sensitive_key, mask, and recursive map_of. Pure - no capabilities.",
+  "author": "Sean Nieuwoudt <sean@underwulf.com>",
+  "license": "MIT",
+  "capabilities": [],
+  "dependencies": {}
+}

@@ -1,0 +1,18 @@
+# Dump a config safely: sensitive keys (by name) come out masked, everything
+# else passes through. Maps print with sorted keys, so output is deterministic.
+#
+#   ecko example.ecko
+
+import "./main.ecko"
+redact = main
+
+let config = {
+    api_key: "sk-live-abc123",
+    region: "eu-west-1",
+    db: { host: "localhost", password: "hunter2", port: 5432 },
+}
+
+print(redact.map_of(config))
+print(redact.mask("Authorization", "Bearer xyz"))
+print(redact.mask("request_id", "r-42"))
+print(redact.is_sensitive_key("userPin"))

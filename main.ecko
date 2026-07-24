@@ -1,0 +1,55 @@
+# redact - heuristic sensitive-KEY detection and masking, for safely logging
+# or dumping config, env, headers, and request maps.
+#
+# Complements the language's own machinery: `secret()`/`reveal()` protect
+# values you KNOW are secret at creation time; redact catches secrets by their
+# key name (DB_PASSWORD, accessToken) at output boundaries, on data you didn't
+# create. Pure computation over std.re - zero capabilities.
+import std.re
+
+export MASK = "***"
+
+# Whole lowercase keys that are always secrets.
+let exact = ["api_key", "apikey", "client_secret", "access_token", "refresh_token", "authorization"]
+
+# Alpha tokens (split from snake/camel case) that mark a key as sensitive.
+# Token matching is word-EQUALITY, so there are no substring traps:
+# "shipping" is safe, "spinner" is safe, but "Pin" and "userPin" are not.
+let tokens = ["pin", "password", "passwd", "secret", "token", "cvv", "otp"]
+
+# Insert word boundaries at camelCase seams, so "APIKey" -> "API_Key" and
+# "accessToken" -> "access_Token". Two passes stand in for the usual lookahead
+# pattern (r"[A-Z]+(?![a-z])"), which Ecko's regex engine doesn't support. The
+# replacement templates are raw strings: in a plain string, {1} would be Ecko
+# interpolation.
+fn split_camel(key) = re.replace(
+    r"([a-z0-9])([A-Z])",
+    re.replace(r"([A-Z]+)([A-Z][a-z])", key, r"${1}_${2}"),
+    r"${1}_${2}",
+)
+
+# All alpha words of a key, lowercased ("DB_PASSWORD" -> [db, password]).
+fn words(key) = re.find_all(r"[a-z]+", lower(split_camel(key)))
+
+# Is this key name one that holds sensitive data?
+export fn is_sensitive_key(key) = contains(exact, lower(key)) or
+    contains(tokens, lower(key)) or
+    any(words(key), fn(w) contains(tokens, w))
+
+# The value, unless its key is sensitive - then the mask.
+export fn mask(key, value) = if is_sensitive_key(key) { MASK } else { value }
+
+# Recurse into container values whose keys are NOT sensitive.
+fn scrub(value) = match type_of(value) {
+    "map" => map_of(value)
+    "list" => map(value, fn(v) scrub(v))
+    _ => value
+}
+
+# A copy of the map with every sensitive key's value masked, recursing into
+# nested maps and lists. Non-sensitive scalars pass through untouched.
+export fn map_of(m) = reduce(
+    keys(m),
+    fn(acc, k) insert(acc, k, if is_sensitive_key(k) { MASK } else { scrub(get(m, k)) }),
+    empty_map(),
+)

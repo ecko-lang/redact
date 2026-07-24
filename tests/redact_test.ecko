@@ -1,0 +1,59 @@
+# Tests for the redact package - offline, deterministic. The behavior table
+# mirrors the Python module this was ported from (verified 2026-07-22).
+import std.test
+import "../main.ecko"
+
+r = main
+
+test.case("exact keys are sensitive regardless of case", fn() {
+    test.eq(r.is_sensitive_key("api_key"), true)
+    test.eq(r.is_sensitive_key("Authorization"), true)
+    test.eq(r.is_sensitive_key("refresh_token"), true)
+})
+
+test.case("tokens match on snake_case and CamelCase words", fn() {
+    test.eq(r.is_sensitive_key("DB_PASSWORD"), true)
+    test.eq(r.is_sensitive_key("AccessToken"), true)
+    test.eq(r.is_sensitive_key("refreshToken"), true)
+    test.eq(r.is_sensitive_key("userPin"), true)
+    test.eq(r.is_sensitive_key("CVV2"), true)
+    test.eq(r.is_sensitive_key("otp"), true)
+})
+
+test.case("word-equality avoids substring traps", fn() {
+    test.eq(r.is_sensitive_key("shipping"), false)
+    test.eq(r.is_sensitive_key("shipping_address"), false)
+    test.eq(r.is_sensitive_key("spinner"), false)
+    test.eq(r.is_sensitive_key("broken_tokens"), false)
+})
+
+test.case("mask replaces only sensitive keys' values", fn() {
+    test.eq(r.mask("db_password", "hunter2"), "***")
+    test.eq(r.mask("region", "eu-west-1"), "eu-west-1")
+})
+
+test.case("map_of masks flat maps", fn() {
+    let out = r.map_of({ api_key: "sk-123", region: "eu" })
+    test.eq(get(out, "api_key"), "***")
+    test.eq(get(out, "region"), "eu")
+})
+
+test.case("map_of recurses into nested maps and lists", fn() {
+    let out = r.map_of(
+        {
+            db: { host: "localhost", password: "hunter2" },
+            users: [{ name: "ada", otp: "123456" }],
+            note: "plain",
+        },
+    )
+    test.eq(get(get(out, "db"), "password"), "***")
+    test.eq(get(get(out, "db"), "host"), "localhost")
+    test.eq(get(get(out, "users")[0], "otp"), "***")
+    test.eq(get(get(out, "users")[0], "name"), "ada")
+    test.eq(get(out, "note"), "plain")
+})
+
+test.case("a sensitive key masks its WHOLE value, even a container", fn() {
+    let out = r.map_of({ secret: { anything: "inside" } })
+    test.eq(get(out, "secret"), "***")
+})
