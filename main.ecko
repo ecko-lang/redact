@@ -7,6 +7,7 @@
 # create. Pure computation over std.re - zero capabilities.
 import std.re
 
+## What a redacted value is replaced with.
 export MASK = "***"
 
 # Whole lowercase keys that are always secrets.
@@ -31,12 +32,12 @@ fn split_camel(key) = re.replace(
 # All alpha words of a key, lowercased ("DB_PASSWORD" -> [db, password]).
 fn words(key) = re.find_all(r"[a-z]+", lower(split_camel(key)))
 
-# Is this key name one that holds sensitive data?
+## Is this key name one that holds sensitive data?
 export fn is_sensitive_key(key) = contains(exact, lower(key)) or
     contains(tokens, lower(key)) or
     any(words(key), fn(w) contains(tokens, w))
 
-# The value, unless its key is sensitive - then the mask.
+## The value, unless its key is sensitive - then the mask.
 export fn mask(key, value) = if is_sensitive_key(key) { MASK } else { value }
 
 # Recurse into container values whose keys are NOT sensitive.
@@ -46,8 +47,8 @@ fn scrub(value) = match type_of(value) {
     _ => value
 }
 
-# A copy of the map with every sensitive key's value masked, recursing into
-# nested maps and lists. Non-sensitive scalars pass through untouched.
+## A copy of the map with every sensitive key's value masked, recursing into
+## nested maps and lists. Non-sensitive scalars pass through untouched.
 export fn map_of(m) = reduce(
     keys(m),
     fn(acc, k) insert(acc, k, if is_sensitive_key(k) { MASK } else { scrub(get(m, k)) }),
