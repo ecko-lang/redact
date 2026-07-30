@@ -11,7 +11,7 @@ create.
 ## Install
 
 ```bash
-ecko get github.com/ecko-sh/redact
+ecko get github.com/ecko-lang/redact
 ```
 
 ## Use
