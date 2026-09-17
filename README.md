@@ -14,7 +14,7 @@ create.
 ecko get github.com/ecko-lang/redact
 ```
 
-## Use
+## Usage
 
 ```ecko
 import redact
