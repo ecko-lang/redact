@@ -40,8 +40,21 @@ redact.map_of({ api_key: "sk-..", db: { password: "x", host: "h" } })
 - `map_of` recurses into nested maps and lists; a sensitive key masks its
   whole value, even when that value is a container.
 
-## Test
+## API
+
+| Export | What it does |
+|---|---|
+| `MASK` | What a redacted value is replaced with. |
+| `is_sensitive_key(key)` | Is this key name one that holds sensitive data? |
+| `mask(key, value)` | The value, unless its key is sensitive - then the mask. |
+| `map_of(m)` | A copy of the map with every sensitive key's value masked, recursing into nested maps and lists. Non-sensitive scalars pass through untouched. |
+
+## Testing
 
 ```bash
 ecko test tests/
 ```
+
+## License
+
+MIT
