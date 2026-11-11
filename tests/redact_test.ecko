@@ -24,7 +24,88 @@ test.case("word-equality avoids substring traps", fn() {
     test.eq(r.is_sensitive_key("shipping"), false)
     test.eq(r.is_sensitive_key("shipping_address"), false)
     test.eq(r.is_sensitive_key("spinner"), false)
-    test.eq(r.is_sensitive_key("broken_tokens"), false)
+    test.eq(r.is_sensitive_key("author"), false)
+    test.eq(r.is_sensitive_key("keyboard"), false)
+    test.eq(r.is_sensitive_key("monkey"), false)
+    test.eq(r.is_sensitive_key("primary_key"), false)
+    test.eq(r.is_sensitive_key("tokenizer"), false)
+})
+
+test.case("HTTP header names are sensitive whatever their case and hyphens", fn() {
+    for k in [
+        "X-API-Key",
+        "x-api-key",
+        "API-KEY",
+        "Api-Key",
+        "Authorization",
+        "Proxy-Authorization",
+        "Cookie",
+        "Set-Cookie",
+        "X-Auth-Token",
+        "X-CSRF-Token",
+    ] {
+        test.ok(r.is_sensitive_key(k), k)
+    }
+    for k in ["Content-Type", "Accept", "User-Agent", "X-Request-Id", "Host"] {
+        test.eq(r.is_sensitive_key(k), false)
+    }
+})
+
+test.case("key material and credentials are sensitive", fn() {
+    for k in [
+        "private_key",
+        "privateKey",
+        "SIGNING_KEY",
+        "encryption_key",
+        "secret_key",
+        "AWS_ACCESS_KEY_ID",
+        "passphrase",
+        "credentials",
+        "pwd",
+        "MYSQL_PWD",
+        "jwt",
+        "ssn",
+        "card_number",
+        "credit_card",
+        "creditCardNumber",
+        "cvc",
+    ] {
+        test.ok(r.is_sensitive_key(k), k)
+    }
+})
+
+test.case("plurals of a sensitive word are sensitive", fn() {
+    for k in ["passwords", "secrets", "auth_tokens", "broken_tokens", "apiKeys", "cookies"] {
+        test.ok(r.is_sensitive_key(k), k)
+    }
+})
+
+test.case(
+    "connection strings are sensitive by their key",
+    fn() {
+        for k in [
+            "DATABASE_URL",
+            "database_url",
+            "dsn",
+            "SENTRY_DSN",
+            "connection_string",
+            "REDIS_URL",
+        ] {
+            test.ok(r.is_sensitive_key(k), k)
+        }
+        out = r.map_of(
+            { DATABASE_URL: "postgres://u:hunter2@h/db", HOME_URL: "https://example.com" },
+        )
+        test.eq(out.DATABASE_URL, "***")
+        test.eq(out.HOME_URL, "https://example.com")
+    },
+)
+
+test.case("is_sensitive_key rejects a key that is not a string", fn() {
+    e = try { r.is_sensitive_key(5) } catch (e) { e }
+    test.eq(e.kind, "bug")
+    test.eq(e.reason, "bad_argument")
+    test.ok(contains(e.message, "redact.is_sensitive_key"))
 })
 
 test.case("mask replaces only sensitive keys' values", fn() {
@@ -56,4 +137,25 @@ test.case("map_of recurses into nested maps and lists", fn() {
 test.case("a sensitive key masks its WHOLE value, even a container", fn() {
     let out = r.map_of({ secret: { anything: "inside" } })
     test.eq(get(out, "secret"), "***")
+})
+
+type Creds { user: String, password: String }
+
+test.case("map_of recurses into typed records", fn() {
+    out = r.map_of({ login: Creds("ada", "hunter2"), all: [Creds("bob", "pw")] })
+    test.eq(out.login, { password: "***", user: "ada" })
+    test.eq(out.all, [{ password: "***", user: "bob" }])
+    test.eq(r.map_of(Creds("ada", "hunter2")), { password: "***", user: "ada" })
+})
+
+test.case("map_of rejects a value that is not a map or record", fn() {
+    e = try { r.map_of([{ password: "x" }]) } catch (e) { e }
+    test.eq(e.kind, "bug")
+    test.eq(e.reason, "bad_argument")
+    test.ok(contains(e.message, "redact.map_of"))
+})
+
+test.case("MASK is what a sensitive value becomes", fn() {
+    test.eq(r.mask("password", 1234), r.MASK)
+    test.eq(r.MASK, "***")
 })

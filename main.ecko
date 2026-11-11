@@ -3,20 +3,75 @@
 #
 # Complements the language's own machinery: `secret()`/`reveal()` protect
 # values you KNOW are secret at creation time; redact catches secrets by their
-# key name (DB_PASSWORD, accessToken) at output boundaries, on data you didn't
-# create. Pure computation over std.re - zero capabilities.
+# key name (DB_PASSWORD, accessToken, X-API-Key) at output boundaries, on data
+# you didn't create. Pure computation over std.re - zero capabilities.
 import std.re
 
-## What a redacted value is replaced with.
+## What a redacted value is replaced with: `"***"`.
 export MASK = "***"
 
-# Whole lowercase keys that are always secrets.
-let exact = ["api_key", "apikey", "client_secret", "access_token", "refresh_token", "authorization"]
+# Words that mark a key as sensitive on their own. A key is split into words
+# (snake_case, kebab-case, camelCase), each word is singularised, and matching
+# is word EQUALITY, so there are no substring traps: "shipping", "spinner",
+# "author" and "tokenizer" are safe, but "Pin", "userPin" and "auth_tokens"
+# are not.
+let tokens = [
+    "pin",
+    "password",
+    "passwd",
+    "pwd",
+    "passphrase",
+    "secret",
+    "token",
+    "cvv",
+    "cvc",
+    "otp",
+    "auth",
+    "authorization",
+    "apikey",
+    "privatekey",
+    "cookie",
+    "credential",
+    "cred",
+    "jwt",
+    "ssn",
+    "dsn",
+]
 
-# Alpha tokens (split from snake/camel case) that mark a key as sensitive.
-# Token matching is word-EQUALITY, so there are no substring traps:
-# "shipping" is safe, "spinner" is safe, but "Pin" and "userPin" are not.
-let tokens = ["pin", "password", "passwd", "secret", "token", "cvv", "otp"]
+# Runs of words that are sensitive together, though each word alone is not
+# ("primary_key" and "card_type" are safe).
+let phrases = [
+    ["api", "key"],
+    ["access", "key"],
+    ["private", "key"],
+    ["signing", "key"],
+    ["encryption", "key"],
+    ["master", "key"],
+    ["session", "key"],
+    ["session", "id"],
+    ["card", "number"],
+    ["credit", "card"],
+    ["connection", "string"],
+]
+
+# A key ending in `_url`/`_uri` is sensitive when it names a data store, whose
+# URL usually carries a password (DATABASE_URL, REDIS_URL).
+let stores = [
+    "database",
+    "db",
+    "redis",
+    "mongo",
+    "mongodb",
+    "postgres",
+    "postgresql",
+    "pg",
+    "mysql",
+    "amqp",
+    "rabbitmq",
+    "broker",
+    "cache",
+    "elasticsearch",
+]
 
 # Insert word boundaries at camelCase seams, so "APIKey" -> "API_Key" and
 # "accessToken" -> "access_Token". Two passes stand in for the usual lookahead
@@ -29,28 +84,97 @@ fn split_camel(key) = re.replace(
     r"${1}_${2}",
 )
 
-# All alpha words of a key, lowercased ("DB_PASSWORD" -> [db, password]).
+# "passwords" -> "password", "cookies" -> "cookie"; "pass" and "dns" stay.
+fn singular(w) = if len(w) > 4 and ends_with(w, "ies") {
+    slice(w, 0, len(w) - 3) + "ie"
+} else if len(w) > 3 and ends_with(w, "s") and not ends_with(w, "ss") {
+    slice(w, 0, len(w) - 1)
+} else {
+    w
+}
+
+# All alpha words of a key, lowercased ("DB_PASSWORDS" -> [db, passwords]).
 fn words(key) = re.find_all(r"[a-z]+", lower(split_camel(key)))
 
-## Is this key name one that holds sensitive data?
-export fn is_sensitive_key(key) = contains(exact, lower(key)) or
-    contains(tokens, lower(key)) or
-    any(words(key), fn(w) contains(tokens, w))
+fn has_run(ws, phrase) = any(
+    range(0, len(ws) - len(phrase) + 1),
+    fn(i) slice(ws, i, i + len(phrase)) == phrase,
+)
 
-## The value, unless its key is sensitive - then the mask.
+## Whether a key name is one that holds sensitive data.
+##
+## The key is split into words (snake_case, kebab-case and camelCase, so
+## `X-API-Key`, `apiKey` and `API_KEY` all read as `api key`), plurals are
+## folded (`passwords`), and a word must equal a sensitive one, so `shipping`
+## and `author` are safe. The README lists every word and phrase.
+##
+## errors: `bug` when `key` is not a String.
+##
+## example:
+##   redact.is_sensitive_key("Proxy-Authorization")   # true
+export fn is_sensitive_key(key) {
+    unless is_string(key) {
+        error(
+            {
+                kind: "bug",
+                reason: "bad_argument",
+                message: "redact.is_sensitive_key: key must be a String, got {type_of(key)}",
+            },
+        )
+    }
+    ws = words(key)
+    sing = map(ws, singular)
+    n = len(ws)
+    any(ws, fn(w) contains(tokens, w)) or
+        any(sing, fn(w) contains(tokens, w)) or
+        contains(tokens, join(sing, "")) or
+        any(phrases, fn(p) has_run(ws, p) or has_run(sing, p)) or
+        n >= 2 and (ws[n - 1] == "url" or ws[n - 1] == "uri") and contains(stores, ws[n - 2])
+}
+
+## The value, unless its key is sensitive - then `MASK`.
+##
+## errors: `bug` when `key` is not a String.
+##
+## example:
+##   redact.mask("db_password", "hunter2")   # "***"
 export fn mask(key, value) = if is_sensitive_key(key) { MASK } else { value }
 
 # Recurse into container values whose keys are NOT sensitive.
 fn scrub(value) = match type_of(value) {
-    "map" => map_of(value)
+    "map" => scrub_fields(value)
+    "struct" => scrub_fields(value)
     "list" => map(value, fn(v) scrub(v))
     _ => value
 }
 
-## A copy of the map with every sensitive key's value masked, recursing into
-## nested maps and lists. Non-sensitive scalars pass through untouched.
-export fn map_of(m) = reduce(
+fn scrub_fields(m) = reduce(
     keys(m),
     fn(acc, k) insert(acc, k, if is_sensitive_key(k) { MASK } else { scrub(get(m, k)) }),
     empty_map(),
 )
+
+## A copy of the map with every sensitive key's value replaced by `MASK`,
+## recursing into nested maps, lists and typed records.
+##
+## A sensitive key masks its whole value, even a container. A typed record
+## comes back as a plain map of its fields, since a masked field may no longer
+## fit its declared type. Other values pass through untouched.
+##
+## errors: `bug` when `m` is not a map or a typed record.
+##
+## example:
+##   redact.map_of({ api_key: "sk-1", region: "eu" })   # {api_key: ***, region: eu}
+export fn map_of(m) {
+    t = type_of(m)
+    unless t == "map" or t == "struct" {
+        error(
+            {
+                kind: "bug",
+                reason: "bad_argument",
+                message: "redact.map_of: m must be a map or a record, got {t}; for a list use map(xs, redact.map_of)",
+            },
+        )
+    }
+    scrub_fields(m)
+}
